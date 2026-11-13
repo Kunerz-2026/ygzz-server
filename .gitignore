@@ -1,0 +1,51 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.venv/
+venv/
+env/
+
+# Local configuration and runtime state
+config.ini
+.env
+work/state.json
+work/state.json.*
+work/accounts/
+work/logs/
+work/_backups/
+work/admin_token.txt
+work/gm_mail.json
+work/gm_mail_time.json
+work/monster_identity_cache.json
+work/server.pid
+work/*.log
+
+# Launcher-generated guide
+使用说明.txt
+
+# Game data (not distributed with this repository)
+data/tables/*
+!data/tables/README.md
+data/tables-alt/*
+data/*.json
+
+# Build / binary artifacts
+*.apk
+*.zip
+*.exe
+*.dll
+*.so
+*.dylib
+*.p12
+*.jks
+*.keystore
+*.pem
+*.key
+
+# Editor / OS noise
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

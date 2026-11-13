@@ -1,0 +1,565 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>YGZZ Server · 后台</title>
+<!--
+  admin_ui.html —— 网页后台 (由 game_server 的 18080 端口提供, 见 admin_backend.py)
+
+  设计要点:
+    · 只走**邮件发放**一条通道: 物品先进邮件, 玩家在游戏里点领取。
+      理由: 邮件是一次性事务 + mail_claimed 持久账本, 写错也只是"领不到", 不会像直写背包那样
+            造成客户端 nil 索引崩溃; 而且进程重启/玩家离线都不影响。
+    · 每种奖励类型的"可选静态 id"都由服务端按**真表**过滤 (tables?type=N)。
+      手输 id 会被服务端 validate_mail_item 挡掉 —— 防铁律#2 (编造 id -> 客户端 SIGSEGV)。
+    · 附件最多 5 个 (客户端 NetMailRead 只读 affix1~5), 前端就按 5 行封顶。
+    · token 从 URL 的 ?t= 取, 之后所有请求带 X-Admin-Token 头。
+-->
+<style>
+  :root{
+    --bg:#14161a; --panel:#1c1f26; --panel2:#22262f; --line:#2e333d;
+    --fg:#e6e9ef; --dim:#98a0ae; --acc:#5b9dff; --ok:#3ecf8e; --warn:#e6b23c; --err:#ff6b6b;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.6 "Microsoft YaHei",system-ui,sans-serif}
+  header{display:flex;align-items:center;gap:12px;padding:12px 18px;background:var(--panel);border-bottom:1px solid var(--line);position:sticky;top:0;z-index:10}
+  header h1{font-size:16px;margin:0;font-weight:600}
+  header .sp{flex:1}
+  .badge{padding:2px 8px;border-radius:10px;font-size:12px;background:var(--panel2);border:1px solid var(--line);color:var(--dim)}
+  .badge.on{color:var(--ok);border-color:#2b5c47}
+  .wrap{display:grid;grid-template-columns:minmax(420px,1.15fr) minmax(360px,1fr);gap:14px;padding:14px}
+  @media(max-width:980px){.wrap{grid-template-columns:1fr}}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px;margin-bottom:14px}
+  .card h2{font-size:14px;margin:0 0 10px;font-weight:600;color:var(--fg);display:flex;align-items:center;gap:8px}
+  .card h2 small{color:var(--dim);font-weight:400}
+  label{display:block;color:var(--dim);font-size:12px;margin:8px 0 4px}
+  input,select,button,textarea{font:inherit;color:var(--fg);background:var(--panel2);border:1px solid var(--line);border-radius:6px;padding:6px 8px}
+  input[type=text],input[type=number],select{width:100%}
+  button{cursor:pointer;background:#2a3040;border-color:#39415a}
+  button:hover{border-color:var(--acc)}
+  button.primary{background:#1d4ed8;border-color:#2b5fd9}
+  button.primary:hover{background:#2358e8}
+  button.danger{background:#4a2226;border-color:#6b2f34}
+  button.sm{padding:3px 8px;font-size:12px}
+  button:disabled{opacity:.45;cursor:not-allowed}
+  .row{display:flex;gap:8px;align-items:flex-end}
+  .row>*{flex:1}
+  .row>button{flex:0 0 auto}
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th,td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{color:var(--dim);font-weight:500;font-size:12px}
+  .atk{display:grid;grid-template-columns:110px 1fr 78px 30px;gap:6px;margin-bottom:6px;align-items:center}
+  .atk select,.atk input{width:100%}
+  .pick{position:relative}
+  .pick .res{position:absolute;left:0;right:0;top:100%;max-height:220px;overflow:auto;background:#0f1116;border:1px solid var(--line);border-radius:6px;z-index:20;display:none}
+  .pick .res div{padding:5px 8px;cursor:pointer;border-bottom:1px solid #1d2129}
+  .pick .res div:hover{background:#232936}
+  .pick .res small{color:var(--dim);margin-left:6px}
+  .chosen{color:var(--ok);font-size:12px}
+  .msg{margin-top:10px;padding:8px 10px;border-radius:6px;font-size:13px;display:none;white-space:pre-wrap}
+  .msg.show{display:block}
+  .msg.ok{background:#12301f;border:1px solid #22543a;color:#b7f0d2}
+  .msg.err{background:#341a1d;border:1px solid #5c2a2f;color:#ffc9c9}
+  .pill{display:inline-block;padding:1px 7px;border-radius:9px;font-size:11px;border:1px solid var(--line);margin-right:4px;color:var(--dim)}
+  .pill.ok{color:var(--ok);border-color:#2b5c47}
+  .pill.warn{color:var(--warn);border-color:#5c4a1e}
+  .pill.err{color:var(--err);border-color:#5c2a2f}
+  pre{background:#0f1116;border:1px solid var(--line);border-radius:6px;padding:10px;max-height:320px;overflow:auto;font-size:12px;white-space:pre-wrap}
+  .kv{display:grid;grid-template-columns:auto 1fr;gap:2px 12px;font-size:13px}
+  .kv b{color:var(--dim);font-weight:400}
+  .hint{color:var(--dim);font-size:12px;margin-top:6px}
+  /* ★v35 妖怪身份卡: 标签 / 告警 (type=4 搜索列表里) */
+  .mtag{color:var(--dim);font-size:11px;margin-top:2px}
+  .mwarn{color:#ffb454;font-size:11px;margin-top:2px;line-height:1.35}
+</style>
+</head>
+<body>
+<header>
+  <h1>YGZZ Server · 后台</h1>
+  <span class="badge" id="bLive">在线 -</span>
+  <span class="badge" id="bPid">pid -</span>
+  <span class="badge" id="bUp">-</span>
+  <span class="sp"></span>
+  <span class="badge" id="bTok">token -</span>
+  <!-- ★2026-10-02 (D5=B): 多账号下服务端**没有缺省账号**（缺 acct 直接 400），
+       所以必须有这个选择器；单档模式下它会被隐藏。 -->
+  <span class="badge" id="bAcct">账号 -</span>
+  <select id="acctSel" style="max-width:260px" title="后台操作哪个账号"></select>
+  <button class="sm" onclick="loadAll()">刷新</button>
+</header>
+
+<div class="wrap">
+  <!-- ================= 左列: 发放 ================= -->
+  <div>
+    <div class="card">
+      <h2>① 发邮件 <small>物品先到邮件, 玩家在游戏里领取</small></h2>
+      <label>标题</label>
+      <input type="text" id="mTitle" value="GM 补给" maxlength="40">
+      <label>附件 <span class="hint">最多 <span id="affixMax">5</span> 个 (客户端只有 affix1~5 个显示位)</span></label>
+      <div id="items"></div>
+      <div class="row" style="margin-top:6px">
+        <button class="sm" onclick="addItem()">+ 添加附件</button>
+        <button class="sm" onclick="setPreset('gold')">预设: 铜钱</button>
+        <button class="sm" onclick="setPreset('soul')">预设: 妖魂</button>
+        <button class="sm" onclick="setPreset('vit')">预设: 体力</button>
+        <button class="sm" onclick="setPreset('pexp')">预设: 玩家经验</button>
+      </div>
+      <div class="row" style="margin-top:10px">
+        <div>
+          <label>邮件 id <span class="hint">留空自动分配 (≥ <span id="idMin">9000</span>)</span></label>
+          <input type="number" id="mId" placeholder="自动">
+        </div>
+        <div>
+          <label>已读状态</label>
+          <select id="mRead"><option value="0">未读 (推荐)</option><option value="1">已读</option></select>
+        </div>
+      </div>
+      <label style="margin-top:10px">
+        <input type="checkbox" id="mClear" checked style="width:auto"> 清掉该 id 的"已领取/已删除"账本
+        <span class="hint">(重发同一封时必须勾, 否则玩家那边永远看不到)</span>
+      </label>
+      <label style="margin-top:6px">
+        <input type="checkbox" id="mAutoBase" style="width:auto"> 妖怪自动降阶（高阶形态 → 链首 1 阶）
+        <span class="hint">(★默认不勾。正常玩法只发 1 阶链首，靠进化往上走；
+          直发 6 阶形态实测会出现"属性四格空白 / 队伍界面错位"。详见 交接文档_v35 §3.3)</span>
+      </label>
+      <div class="row" style="margin-top:12px">
+        <button class="primary" id="btnCreate" onclick="createMail()">创建邮件</button>
+        <button onclick="pushMails()">推送给在线玩家</button>
+      </div>
+      <div class="msg" id="sendMsg"></div>
+      <div class="hint">
+        流程: 创建 → 服务端写 <code>gm_mail.json</code> 并立即热生效 → 点"推送给在线玩家"让在线端立刻显示。
+        玩家离线也没关系, 下次打开邮件界面会拉到。
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>② 玩家状态 <small>读取自服务端内存 (权威)</small></h2>
+      <div class="kv" id="playerBox"></div>
+      <div style="margin-top:10px"><button class="sm" onclick="pushBag()">推送道具背包 (1033)</button></div>
+    </div>
+
+    <div class="card">
+      <h2>②b 存档快照 / 一键回档 <small>★v36：回档会把在线客户端踢下线，让它重连</small></h2>
+      <div class="row" style="margin-bottom:8px">
+        <button class="sm" onclick="snapshotNow()">立刻打一份快照</button>
+        <button class="sm" onclick="loadSave()">刷新列表</button>
+        <span class="hint" id="saveInfo"></span>
+      </div>
+      <table>
+        <thead><tr><th>时间</th><th>标签 / 说明</th><th>摘要 (等级/铜钱/怪/版本)</th><th></th></tr></thead>
+        <tbody id="saveRows"><tr><td colspan="4" class="hint">加载中…</td></tr></tbody>
+      </table>
+      <div class="msg" id="saveMsg"></div>
+    </div>
+  </div>
+
+  <!-- ================= 右列: 邮件列表 / 日志 ================= -->
+  <div>
+    <div class="card">
+      <h2>③ 已配置的 GM 邮件 <small>撤销/推送/排错</small></h2>
+      <div id="mailProblems"></div>
+      <table>
+        <thead><tr><th>id</th><th>标题 / 附件</th><th>状态</th><th></th></tr></thead>
+        <tbody id="mailRows"><tr><td colspan="4" class="hint">加载中…</td></tr></tbody>
+      </table>
+    </div>
+
+    <div class="card">
+      <h2>④ 服务端日志 <small>server_debug.log</small></h2>
+      <div class="row">
+        <select id="logFile">
+          <option value="server_debug.log">server_debug.log (真处理日志)</option>
+          <option value="game_server.log">game_server.log (会被重定向截断)</option>
+        </select>
+        <button class="sm" onclick="loadLog()">读取</button>
+      </div>
+      <pre id="logBox" style="margin-top:8px">点"读取"看尾部日志。</pre>
+    </div>
+
+    <div class="card">
+      <h2>⑤ 环境事实</h2>
+      <div class="kv" id="statusBox"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+const TOKEN = new URLSearchParams(location.search).get('t') || localStorage.getItem('ygzz_admin_token') || '';
+if (TOKEN) localStorage.setItem('ygzz_admin_token', TOKEN);
+document.getElementById('bTok').textContent = TOKEN ? ('token ' + TOKEN.slice(0,6) + '…') : 'token 缺失';
+
+let STATUS = null;
+let SEQ = 0;
+const $ = id => document.getElementById(id);
+
+/* ===== ★2026-10-02 (D5=B) 账号选择 =====
+   为什么放在 api() 里：**api() 是唯一收口** —— 全页 13 个调用点一行都不用改，
+   也就不存在"某个接口忘了带 acct"这种漏。单档模式下 ACCT 恒为空串，行为与改造前逐字节一致。 */
+const ACCT_KEY = 'ygzz_admin_acct';
+let ACCT = new URLSearchParams(location.search).get('acct') || localStorage.getItem(ACCT_KEY) || '';
+let ACCOUNTS = [];
+let MULTI = false;
+
+function withAcct(path) {
+  if (!ACCT) return path;
+  return path + (path.indexOf('?') >= 0 ? '&' : '?') + 'acct=' + encodeURIComponent(ACCT);
+}
+
+async function api(path, opts) {
+  opts = opts || {};
+  opts.headers = Object.assign({'X-Admin-Token': TOKEN}, opts.headers || {});
+  const r = await fetch(withAcct(path), opts);
+  let j = null;
+  try { j = await r.json(); } catch (e) { j = {ok:false, error:'非 JSON 响应 HTTP ' + r.status}; }
+  j.__http = r.status;
+  return j;
+}
+
+async function loadAccounts() {
+  const j = await api('/admin/api/accounts');      /* 这个接口本身不需要 acct */
+  MULTI = !!j.multi_account;
+  ACCOUNTS = j.accounts || [];
+  const sel = $('acctSel');
+  if (!MULTI) {
+    sel.style.display = 'none';
+    $('bAcct').textContent = '单档模式';
+    ACCT = '';
+    return;
+  }
+  sel.style.display = '';
+  if (!ACCOUNTS.some(a => a.id === ACCT)) {
+    ACCT = ACCOUNTS.some(a => a.id === j.current) ? j.current : ((ACCOUNTS[0] && ACCOUNTS[0].id) || '');
+    if (ACCT) localStorage.setItem(ACCT_KEY, ACCT);
+  }
+  sel.innerHTML = ACCOUNTS.map(a =>
+      '<option value="' + a.id + '"' + (a.id === ACCT ? ' selected' : '') + '>' +
+      a.id + ' · ' + (a.role_name || '') + (a.online ? ' ●在线' : '') +
+      (a.corrupt ? ' ⚠坏档' : '') + ' (lv' + (a.player_lv == null ? '?' : a.player_lv) + ')</option>'
+    ).join('') || '<option value="">(无账号)</option>';
+  $('bAcct').textContent = '账号 ' + (ACCT || '(无)');
+}
+function say(el, text, ok) {
+  const e = $(el);
+  e.className = 'msg show ' + (ok ? 'ok' : 'err');
+  e.textContent = text;
+}
+function fmtTime(ms) {
+  if (!ms) return '-';
+  const d = new Date(Number(ms));
+  const p = n => String(n).padStart(2,'0');
+  return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+function fmtUp(s) {
+  if (s == null) return '-';
+  const h = Math.floor(s/3600), m = Math.floor(s%3600/60);
+  return `运行 ${h}h${m}m`;
+}
+
+async function loadStatus() {
+  const s = await api('/admin/api/status');
+  if (s.error && !s.pid) { say('sendMsg', '后台鉴权/接口失败: ' + (s.error||s.__http), false); return; }
+  STATUS = s;
+  $('affixMax').textContent = s.affix_max;
+  $('idMin').textContent = s.gm_mail_id_min;
+  $('bPid').textContent = 'pid ' + s.pid;
+  $('bUp').textContent = fmtUp(s.uptime_sec);
+  $('bLive').textContent = '在线 ' + (s.live_conns == null ? '-' : s.live_conns);
+  $('bLive').className = 'badge' + (s.live_conns ? ' on' : '');
+  $('statusBox').innerHTML = [
+    ['存档', s.savefile],
+    ['存档大小', s.save_bytes + ' 字节' + (s.save_bytes > 0 ? '' : ' (读不到?)')],
+    ['生产存档可写', s.real_save_write_allowed ? '是 (这是服务端进程)' : '否'],
+    ['GM 邮件配置', s.gm_mail_path],
+    ['可发放类型', (s.mail_types||[]).map(t => t.type + t.label).join(' / ')],
+  ].map(([k,v]) => `<b>${k}</b><span>${v}</span>`).join('');
+}
+
+async function loadPlayer() {
+  const p = await api('/admin/api/player');
+  if (p.error) return;
+  $('playerBox').innerHTML = [
+    ['等级 / 经验', `${p.player_lv} / ${p.player_exp}`],
+    ['铜钱', Number(p.gold).toLocaleString()],
+    ['妖魂', Number(p.soulcoin).toLocaleString()],
+    ['鬼道积分', Number(p.kidou).toLocaleString()],
+    ['妖精蛋', p.eggcoin],
+    ['道具种数', p.prop_kinds],
+    ['装备件数', p.equip_kinds],
+    ['妖怪数', p.monsters],
+    ['元灵数', p.ghost],
+    ['宝箱', JSON.stringify(p.treasure_bag || {})],
+    ['妖塔层数', p.tower_plies],
+    ['已领邮件', (p.mail_claimed||[]).join(', ') || '(无)'],
+    ['已删邮件', (p.mail_deleted||[]).join(', ') || '(无)'],
+  ].map(([k,v]) => `<b>${k}</b><span>${v}</span>`).join('');
+}
+
+/* ---------------- 附件编辑行 ---------------- */
+function typeOptions(sel) {
+  const list = (STATUS && STATUS.mail_types) || [];
+  return list.map(t =>
+    `<option value="${t.type}" ${String(t.type)===String(sel)?'selected':''}>${t.label}</option>`).join('');
+}
+function addItem(type, id, cnt) {
+  if ($('items').children.length >= (STATUS ? STATUS.affix_max : 5)) { alert('附件已达上限'); return; }
+  const n = SEQ++;
+  const div = document.createElement('div');
+  div.className = 'atk';
+  div.dataset.seq = n;
+  div.innerHTML = `
+    <select class="ty" onchange="onType(this)">${typeOptions(type||3)}</select>
+    <div class="pick">
+      <input type="text" class="q" placeholder="搜物品名或 id (货币类可留空)" autocomplete="off"
+             oninput="onQuery(this)" onfocus="onQuery(this)">
+      <div class="res"></div>
+      <label class="hint" style="display:block;margin-top:2px">
+        <input type="checkbox" class="allf" style="width:auto" onchange="onQuery(this.parentNode.parentNode.querySelector('.q'))">
+        显示全部形态
+        <span class="hint">(妖怪默认只列**链首**；勾上才显示"皮肤形态怪"，排错用)</span>
+      </label>
+      <label class="hint bonus-wrap" style="display:none;margin-top:2px">
+        <input type="checkbox" class="bonusonly" checked style="width:auto" onchange="onQuery(this.parentNode.parentNode.querySelector('.q'))">
+        只列**带属性加成**的皮肤 <span class="hint">(L98 共 434 个皮肤，只有 22 个有属性加成；不勾则显示全部)</span>
+      </label>
+      <div class="chosen"></div>
+      <input type="hidden" class="iid" value="${id||''}">
+      <div class="mcard"></div>
+    </div>
+    <input type="number" class="cnt" value="${cnt||1}" min="1">
+    <button class="sm danger" onclick="this.parentNode.remove()">×</button>`;
+  $('items').appendChild(div);
+  onType(div.querySelector('.ty'));
+  if (id) markChosen(div, id, '');
+}
+function onType(sel) {
+  const row = sel.closest('.atk');
+  const t = Number(sel.value);
+  const meta = (STATUS.mail_types||[]).find(x => x.type === t) || {};
+  const q = row.querySelector('.q');
+  q.disabled = !meta.need_id;
+  row.querySelector('.iid').value = '';
+  row.querySelector('.chosen').textContent = meta.need_id ? '' : '（数值类，填数量即可）';
+  if (!meta.need_id) { row.querySelector('.res').style.display = 'none'; }
+  // ★v36/v37: 两个过滤开关按类型显示 —— 妖怪(4) 显示"全部形态"; 皮肤(14) 显示"只列带加成"
+  const allfWrap = row.querySelector('.allf').closest('label');
+  allfWrap.style.display = (t === 4) ? 'block' : 'none';
+  const bw = row.querySelector('.bonus-wrap');
+  if (bw) { bw.style.display = (t === 14) ? 'block' : 'none'; }
+}
+let qtimer = null;
+function onQuery(inp) {
+  const row = inp.closest('.atk');
+  const t = Number(row.querySelector('.ty').value);
+  const allf = !!(row.querySelector('.allf') && row.querySelector('.allf').checked);
+  const bonCk = row.querySelector('.bonusonly');
+  const bonusOnly = bonCk ? !!bonCk.checked : true;
+  clearTimeout(qtimer);
+  qtimer = setTimeout(async () => {
+    const r = await api('/admin/api/tables?type=' + t + '&q=' + encodeURIComponent(inp.value) +
+                        '&limit=60' + (allf ? '&all_forms=1' : '') +
+                        (t === 14 && !bonusOnly ? '&bonus_skin_only=0' : ''));
+    const box = row.querySelector('.res');
+    const items = r.items || [];
+    const hid = items.length ? (items[0].hidden_forms || 0) : 0;
+    const hidTip = hid ? `（已隐藏 ${hid} 个${t === 14 ? '无属性加成的皮肤' : '皮肤形态怪'}）` : '';
+    if (!items.length) {
+      box.innerHTML = '<div class="hint">无匹配' + hidTip + '</div>';
+      box.style.display = 'block'; return;
+    }
+    // ★v35~v37: type=4 妖怪行带身份卡标签+告警; type=14 皮肤行带"给哪只怪用 + 什么加成"
+    box.innerHTML = items.map(it => {
+      const warn = (it.warn || []).map(w => `<div class="mwarn">${w}</div>`).join('');
+      const tag = it.tag ? `<div class="mtag">${it.tag}</div>` : '';
+      return `<div onclick="pick(${it.id}, this)">${it.name}<small>id=${it.id} ${it.extra||''}</small>${tag}${warn}</div>`;
+    }).join('') + (hid ? `<div class="hint">已隐藏 ${hid} 个` +
+      (t === 14 ? '无属性加成的皮肤（取消勾选可看）' : '皮肤形态怪（勾"显示全部形态"可看）') + `</div>` : '');
+    box.style.display = 'block';
+  }, 120);
+}
+function pick(id, el) {
+  const row = el.closest('.atk');
+  const name = el.childNodes[0].textContent;
+  row.querySelector('.iid').value = id;
+  row.querySelector('.q').value = name;
+  const t = Number(row.querySelector('.ty').value);
+  row.querySelector('.chosen').textContent = '已选: ' + name + ' (id=' + id + ')';
+  row.querySelector('.res').style.display = 'none';
+  // ★v35: 妖怪(type=4) 选中后拉一次完整身份卡, 钉在附件行下面 (只读提示)
+  const card = row.querySelector('.mcard');
+  card.innerHTML = '';
+  if (t === 4) {
+    api('/admin/api/monster_info?id=' + id).then(d => {
+      if (!d || d.known === false) { card.innerHTML = ''; return; }
+      const chain = (d.chain || []).map(c =>
+        `${c.id}${c.id === d.id ? '◀' : ''}${c.final ? '(末)' : ''}`).join(' → ');
+      let html = `<div class="mtag">链 ${d.chain_id} · ${d.chain_len} 阶: ${chain}</div>`;
+      html += `<div class="mtag">阵营=${d.faction} · 星级=${d.star} · UnitType=${d.unit_type}` +
+              ` · 羁绊=${(d.fetters || []).map(f => f.name).join(',') || '无'}</div>`;
+      if ((d.same_character_ids || []).length)
+        html += `<div class="mtag">同角色(详情文案逐字相同) ${d.same_character_ids.length} 个形态: ` +
+                `${d.same_character_ids.slice(0, 12).join(',')}${d.same_character_ids.length > 12 ? ' …' : ''}</div>`;
+      html += (d.warn || []).map(w => `<div class="mwarn">${w}</div>`).join('');
+      card.innerHTML = html;
+    }).catch(() => {});
+  }
+}
+function markChosen(row, id, name) {
+  row.querySelector('.iid').value = id;
+  row.querySelector('.chosen').textContent = '已选 id=' + id;
+}
+function setPreset(kind) {
+  // ★v37: 加了 pexp(玩家经验, type=17) —— 用户要"升到高级解锁更多功能"做测试
+  const map = {gold: 3, soul: 7, vit: 9, pexp: 17};
+  $('items').innerHTML = '';
+  const t = map[kind];
+  const cnt = {gold: 100000, soul: 10000, vit: 5, pexp: 50000}[kind] || 5;
+  addItem(t, '', cnt);
+}
+function collect() {
+  const out = [];
+  for (const row of $('items').children) {
+    const t = Number(row.querySelector('.ty').value);
+    const meta = (STATUS.mail_types||[]).find(x => x.type === t) || {};
+    const id = meta.need_id ? Number(row.querySelector('.iid').value || 0) : 0;
+    const cnt = Number(row.querySelector('.cnt').value || 0);
+    if (meta.need_id && !id) { return {err: `类型「${meta.label}」还需要选一个物品`}; }
+    out.push([t, id, cnt]);
+  }
+  return {items: out};
+}
+async function createMail() {
+  const c = collect();
+  if (c.err) { say('sendMsg', c.err, false); return; }
+  if (!c.items.length) { say('sendMsg', '至少加一个附件', false); return; }
+  const body = {title: $('mTitle').value, items: c.items, read: Number($('mRead').value),
+                clear_ledger: $('mClear').checked,
+                // ★v35 §3.3: 妖怪自动降阶（默认关）—— 正常玩法只发 1 阶链首
+                auto_base: !!($('mAutoBase') && $('mAutoBase').checked)};
+  const mid = $('mId').value.trim();
+  if (mid) body.id = Number(mid);
+  $('btnCreate').disabled = true;
+  const r = await api('/admin/api/mails', {method:'POST', headers:{'Content-Type':'application/json'},
+                                          body: JSON.stringify(body)});
+  $('btnCreate').disabled = false;
+  if (r.ok) {
+    say('sendMsg', `已创建邮件 id=${r.data.id}\n附件: ${JSON.stringify(r.data.items)}` +
+        ((r.data.notes && r.data.notes.length) ? `\n（自动降阶）${r.data.notes.join('；')}` : '') +
+        (r.data.cleared && r.data.cleared.length ? `\n已清账本: ${r.data.cleared.join(',')}` : '') +
+        `\n下一步: 点「推送给在线玩家」`, true);
+    $('mId').value = '';
+    loadMails();
+  } else {
+    say('sendMsg', '创建失败: ' + (r.error || r.__http) + ' (服务端按真表校验, 索引不到的 id 会被拒)', false);
+  }
+}
+async function loadMails() {
+  const r = await api('/admin/api/mails');
+  if (r.error && !r.mails) { $('mailRows').innerHTML = `<tr><td colspan="4">${r.error||r.__http}</td></tr>`; return; }
+  const rows = r.mails || [];
+  $('mailRows').innerHTML = rows.length ? rows.map(m => {
+    const bits = [];
+    if (m.visible) bits.push('<span class="pill ok">玩家可见</span>');
+    if (m.claimed) bits.push('<span class="pill warn">已领取</span>');
+    if (m.deleted) bits.push('<span class="pill warn">已删除</span>');
+    if (m.problems && m.problems.length) bits.push('<span class="pill err">有问题</span>');
+    const dis = (m.items_display && m.items_display.length) ? m.items_display : (m.items||[]).map(x => JSON.stringify(x));
+    return `<tr>
+      <td>${m.id}</td>
+      <td><b>${m.title||''}</b><br><span class="hint">${dis.join('<br>')}</span>
+          ${(m.problems||[]).map(p=>`<br><span class="pill err">${p}</span>`).join('')}</td>
+      <td><span class="hint">${fmtTime(m.time)}</span><br>${bits.join('')}</td>
+      <td><button class="sm" onclick="delMail(${m.id})">撤销</button></td></tr>`;
+  }).join('') : '<tr><td colspan="4" class="hint">还没有 GM 邮件</td></tr>';
+  const probs = [];
+  if (r.parse_error) probs.push(`<div class="msg err show">gm_mail.json 解析失败, 服务端仍在用上一份好配置: ${r.parse_error}</div>`);
+  for (const s of (r.skipped||[])) probs.push(`<div class="hint">被跳过: id=${s.id} ${s.why}</div>`);
+  $('mailProblems').innerHTML = probs.join('');
+}
+async function delMail(id) {
+  if (!confirm('从 gm_mail.json 移除邮件 id=' + id + ' 并清掉它的领取/删除账本?')) return;
+  const r = await api('/admin/api/mails?id=' + id, {method:'DELETE'});
+  if (!r.ok) alert('撤销失败: ' + (r.error||r.__http));
+  loadMails();
+}
+async function pushMails() {
+  const r = await api('/admin/api/push_mails', {method:'POST'});
+  say('sendMsg', `已向 ${r.pushed} 个在线连接推送 1059 (邮件列表)。` +
+       (r.pushed ? '' : '当前没有在线连接 —— 玩家下次打开邮件界面会拉到。'), r.pushed > 0);
+}
+async function pushBag() {
+  const r = await api('/admin/api/push_bag', {method:'POST'});
+  alert('已推送 1033 道具背包给 ' + r.pushed + ' 个在线连接');
+}
+async function loadLog() {
+  const r = await api('/admin/api/log?file=' + encodeURIComponent($('logFile').value) + '&lines=250');
+  $('logBox').textContent = (r.lines && r.lines.length) ? r.lines.join('\n') : ('(空) ' + (r.error||''));
+}
+async function loadAll() { await loadStatus(); await Promise.all([loadPlayer(), loadMails(), loadSave()]); }
+
+// ================= ★v36 存档快照 / 一键回档 =================
+async function loadSave() {
+  const r = await api('/admin/api/save');
+  const items = r.items || [];
+  $('saveInfo').textContent = `结构版本 v${r.state_version} · 目录 ${r.backup_dir} · 保留 ${r.keep} 份`;
+  $('saveRows').innerHTML = items.length ? items.map(b => `<tr>
+      <td><span class="hint">${b.created || fmtTime((b.mtime||0)*1000)}</span></td>
+      <td><b>${b.tag || '?'}</b>${b.note ? '<br><span class="hint">' + b.note + '</span>' : ''}
+          <br><span class="hint">${b.file || ''}</span></td>
+      <td><span class="hint">lv=${b.player_lv} 铜钱=${b.gold} 怪=${b.monsters} 邮件=${b.mail_claimed} v${b.state_version}<br>sha=${b.sha256}</span></td>
+      <td><button class="sm danger" onclick="restoreSave('${b.file}','${b.sha256}')">回档</button></td>
+    </tr>`).join('') : '<tr><td colspan="4" class="hint">还没有快照</td></tr>';
+}
+async function snapshotNow() {
+  const note = prompt('给这份快照写个说明 (可留空)：', '手动快照');
+  if (note === null) return;
+  const r = await api('/admin/api/save', {method:'POST', headers:{'Content-Type':'application/json'},
+                                          body: JSON.stringify({action:'snapshot', note})});
+  say('saveMsg', r.ok ? ('已打快照: ' + (r.data && r.data.file)) : ('失败: ' + (r.error || r.__http)), !!r.ok);
+  loadSave();
+}
+async function restoreSave(file, sha) {
+  if (!confirm('确认用这份快照覆盖当前存档？\n\n' + file + '\nsha=' + sha +
+               '\n\n· 会先自动留底一份 (pre-restore)，所以这一步本身可以再回滚\n' +
+               '· 在线客户端会被踢下线，需要重连')) return;
+  const r = await api('/admin/api/save', {method:'POST', headers:{'Content-Type':'application/json'},
+                                          body: JSON.stringify({action:'restore', file, sha})});
+  if (r.ok) {
+    const d = r.data || {};
+    say('saveMsg', `回档完成：${d.msg}\n断开连接 ${d.dropped_conns} 条 · 回到 lv=${d.player_lv} 铜钱=${d.gold} 怪=${d.monsters}`
+        + '\n请在游戏里等它自动重连 (或点启动器 [9] 强制重启游戏)', true);
+  } else {
+    say('saveMsg', '回档失败: ' + (r.error || r.__http), false);
+  }
+  await Promise.all([loadSave(), loadPlayer()]);
+}
+
+  document.getElementById('acctSel').addEventListener('change', function (e) {
+  ACCT = e.target.value || '';
+  if (ACCT) localStorage.setItem(ACCT_KEY, ACCT);
+  try {
+    const u = new URL(location.href);
+    if (ACCT) u.searchParams.set('acct', ACCT); else u.searchParams.delete('acct');
+    history.replaceState(null, '', u);
+  } catch (err) { /* 老浏览器: 忽略, 只影响地址栏回显 */ }
+  $('bAcct').textContent = '账号 ' + (ACCT || '(无)');
+  loadAll();
+});
+
+/* ★ 启动顺序：**先拿到账号列表再拉数据** —— 反过来的话，多账号下
+   `loadAll()` 会在还不知道 acct 的情况下发一堆请求，每个都吃 400。 */
+loadAccounts().then(function () {
+  if (MULTI && !ACCT) {
+    $('bAcct').textContent = '账号 (无 —— 先在右上角选一个)';
+    return null;
+  }
+  return loadAll().then(function () {
+    if (!$('items').children.length) setPreset('gold');   // 首次进页面给一行默认附件
+  });
+});
+setInterval(loadStatus, 15000);
+</script>
+</body>
+</html>

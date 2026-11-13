@@ -1,0 +1,2 @@
+# YGZZ Server has no third-party runtime dependencies.
+# Python 3.10+ standard library only.

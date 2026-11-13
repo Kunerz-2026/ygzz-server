@@ -1,0 +1,24 @@
+# YGZZ Server configuration
+# Copy this file to config.ini and edit locally. Restart run_server.py after changes.
+# Save as UTF-8; do not wrap values in quotes.
+
+[server]
+# HTTP port (login / resource endpoints). Clients use http://<IP>:<this port>.
+http_port = 18080
+# Game socket ports (two).
+game_port = 27001
+game_port2 = 27002
+
+# Invite code: empty = registration is open; set a value to require it.
+# Example: invite_code = change-me
+invite_code =
+
+# Guest login: 1 = legacy account-name-only mode; 0 = account + password (default).
+guest_login = 0
+
+# Address advertised to clients: auto = pick a local IPv4 automatically.
+# If auto picks the wrong interface (WiFi / VPN / overlay network), set it explicitly.
+advertise_ip = auto
+
+# Report contact shown in the in-game notice. Empty = "contact the server operator".
+report_contact =
