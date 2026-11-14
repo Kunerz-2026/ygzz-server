@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""run_server.py —— YGZZ Server · 便携服务端启动器
+"""run_server.py —— Yokai: Spirits Hunt (妖怪正传) · 便携服务端启动器
 
 做五件事：
   1. 读 config.ini（端口 / 邀请码 / 手动指定 IP）；
@@ -112,7 +112,7 @@ def port_free(p):
 
 def write_guide(ip, ports, invite, cands=None):
     lines = [
-        '妖怪正传私服 · 使用说明',
+        'Yokai: Spirits Hunt (妖怪正传) · 使用说明',
         '=' * 40,
         '',
         '1) 本机开服已启动，服务器地址：',
@@ -194,7 +194,7 @@ def main():
         env['YGZZ_ASSETS'] = ext
 
     log('=' * 56)
-    log(' YGZZ Server · 便携服务端')
+    log(' Yokai: Spirits Hunt (妖怪正传) · 便携服务端')
     log('=' * 56)
     log(' 服务器地址（客户端整行填写）:')
     log('    http://%s:%d' % (ip, ports[0]))

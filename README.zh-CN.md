@@ -1,6 +1,6 @@
-# YGZZ Server
+# Yokai: Spirits Hunt (妖怪正传)
 
-**《妖怪正传》（*Yokai: Spirits Hunt*）的非官方粉丝服务端实现。**
+**非官方粉丝服务端实现。**
 
 > 本项目与游戏的发行商、版权方**无隶属、代理或合作关系**。仓库只包含**服务端源码**，
 > 不包含、也不分发游戏客户端、客户端文件、素材、数据表、美术、音频或其他版权内容。
@@ -37,8 +37,8 @@
 ## 快速开始
 
 ```bash
-git clone https://github.com/Kunerz-2026/ygzz-server.git
-cd ygzz-server
+git clone https://github.com/Kunerz-2026/Yokai-Spirits-Hunt.git
+cd Yokai-Spirits-Hunt
 python -m venv .venv
 # Windows: .venv\Scripts\activate
 # Linux/macOS: . .venv/bin/activate
@@ -74,6 +74,8 @@ python run_server.py
 - `YGZZ_ADVERTISE_HOST` — 下发给客户端的地址
 - `YGZZ_BIND_HOST` — 监听地址
 - `YGZZ_AUTH`、`YGZZ_MULTI_ACCOUNT`、`YGZZ_PUBLIC` — 安全相关开关，见 `run_server.py`
+
+> `YGZZ_` 环境变量前缀仅为兼容既有部署而保留，不是项目名。项目名为 **Yokai: Spirits Hunt（妖怪正传）**。
 
 ## 测试
 

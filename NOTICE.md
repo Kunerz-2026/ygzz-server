@@ -1,6 +1,6 @@
 # NOTICE
 
-YGZZ Server is an **unofficial, fan-made server implementation** for the mobile game
+This project is an **unofficial, fan-made server implementation** for the mobile game
 *Yokai: Spirits Hunt* (妖怪正传).
 
 - This project is **not affiliated with, endorsed by, or sponsored by** the game's publisher,

@@ -1,6 +1,6 @@
-# YGZZ Server
+# Yokai: Spirits Hunt (妖怪正传)
 
-**Unofficial, fan-made server implementation for the mobile game *Yokai: Spirits Hunt* (妖怪正传).**
+**Unofficial, fan-made server implementation.**
 
 > This project is not affiliated with, endorsed by, or sponsored by the game's publisher or
 > rights holders. It contains **server-side source code only**. No game client, installation
@@ -41,8 +41,8 @@ tell you where to obtain them.
 ## Quick start
 
 ```bash
-git clone https://github.com/Kunerz-2026/ygzz-server.git
-cd ygzz-server
+git clone https://github.com/Kunerz-2026/Yokai-Spirits-Hunt.git
+cd Yokai-Spirits-Hunt
 python -m venv .venv
 # Windows: .venv\Scripts\activate
 # Linux/macOS: . .venv/bin/activate
@@ -80,6 +80,9 @@ Useful environment variables:
 - `YGZZ_ADVERTISE_HOST` — address sent to clients
 - `YGZZ_BIND_HOST` — bind address
 - `YGZZ_AUTH`, `YGZZ_MULTI_ACCOUNT`, `YGZZ_PUBLIC` — security-related switches; see `run_server.py`
+
+> The `YGZZ_` environment-variable prefix is retained for backward compatibility with existing
+deployments; it is not the project name. The project name is **Yokai: Spirits Hunt (妖怪正传)**.
 
 ## Tests
 

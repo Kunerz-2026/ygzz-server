@@ -1,8 +1,8 @@
 blank_issues_enabled: false
 contact_links:
   - name: Security report
-    url: https://github.com/Kunerz-2026/ygzz-server/security/advisories/new
+    url: https://github.com/Kunerz-2026/Yokai-Spirits-Hunt/security/advisories/new
     about: Report vulnerabilities privately. Do not open a public issue with exploit details.
   - name: Read the README first
-    url: https://github.com/Kunerz-2026/ygzz-server#readme
+    url: https://github.com/Kunerz-2026/Yokai-Spirits-Hunt#readme
     about: Setup, data tables, and the scope of this repository.

@@ -8,7 +8,7 @@ Only the latest commit on `main` is supported. This is a hobby project with no S
 
 Please use GitHub's **private vulnerability reporting** for this repository:
 
-<https://github.com/Kunerz-2026/ygzz-server/security/advisories/new>
+<https://github.com/Kunerz-2026/Yokai-Spirits-Hunt/security/advisories/new>
 
 Do **not** open a public issue with exploit details, credentials, personal data, or game
 assets. If private reporting is unavailable, open a minimal public issue asking for a private

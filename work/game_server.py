@@ -2392,7 +2392,7 @@ GAME_DATA = {
     'complaints': True, 'complaints_url': 'https://example.com',
     'behavior': False, 'behavior_url': 'https://example.com',
 }
-SERVER_ITEM = {'serverid':9001,'ip':ADV_HOST,'port':ADV_SOCK_PORT,'name':'YGZZ Server','status':2,
+SERVER_ITEM = {'serverid':9001,'ip':ADV_HOST,'port':ADV_SOCK_PORT,'name':'Yokai: Spirits Hunt (妖怪正传)','status':2,
                'preopenstate':0,'preopentime':0,'listenbehavior':1,'orderindex':1,
                # ★2026-10-01 (B 任务): 字段名兼容别名 —— 同一份服务器对象在客户端有**两套**读法:
                #   · 活路径 MLoginHome.lua:137-138 `getServerInfoByID(...)` -> `.ip` / `.port`  ✔ 一直是对的
