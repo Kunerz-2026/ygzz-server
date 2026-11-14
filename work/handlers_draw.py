@@ -180,7 +180,20 @@ def _cardpool():
 
 COST_DEMONSOUL = 100   # 人脉一抽消耗妖魂 (client const_Contacts 默认200, CARD_TIME.costdemonsoul 覆盖)
 COST_TICKET    = 1     # 唤妖符一抽消耗券; 五抽=5
-MAX_BAG        = 21    # 怪物背包上限 (SQGamer:getMaxMonster)
+# ★★2026-11-14（用户要求放宽背包）：官方客户端 `SQGamer:getMaxMonster()` 写死 **21**，但这个
+#   函数在装机包里**只有一个调用点**（`app/team/TableTest.lua:70`，一个调试面板）；
+#   正式 UI（`team/RoleListVertical.lua`）是遍历 `monster_getTotalItem()` 的，不按 21 截断。
+#   真正决定"能装多少"的是 1032 的 `"当前页/总页"`：客户端 `NetMonsterBag.lua:69-80` 拿到
+#   `currentPage < totalPages` 会**自动请求下一页**，`== totalPages` 才 setFinishLoad —— 页大小
+#   完全由服务端给，客户端没有写死每页几只。
+#   ⇒ 扩容只改下面两个常量，**不用动客户端、不用重打 APK**：
+#     · BAG_PAGE = 每页只数。★★2026-11-14 真机实测：**每多一页，客户端登录要多等 5 秒**
+#       （21/页 + 200 只 = 10 页 → 卡在"游戏加载中"约 50 秒；日志是 page=1..10 每 5 秒一页）。
+#       ⇒ 页大小直接取上限 200：满包也只有 **1 页**（1032 单帧 ~20KB，实测数量=200 正常）。
+#       分页代码保留 —— 以后要 >200 时把 BAG_PAGE 调小即可，但要想清楚"5 秒/页"的代价。
+#     · MAX_BAG  = 上限。2026-11-14 两次调整：21 → 42 → **200**。
+BAG_PAGE       = 200   # 1032 每页只数：取满上限 = 正常只会有 1 页（见上，5 秒/页的实测）
+MAX_BAG        = 200   # 怪物背包上限；抽卡/礼包/邮件/剧情四条造怪路径共用
 _SSR_BOOST     = 50    # SSR档权重放大倍数 (私服娱乐: 真实权重10/8000≈0.1%太低, 放大后约6%)
 _LUCK_SSR_STEP = 20    # 幸运值对SSR档的加权步长 (eff = chance*(1 + luck*step/1000))
 
@@ -385,11 +398,37 @@ def handle_draw_card(body_json):
     return resp.encode('utf-8')
 
 # ---------- 动态背包: 怪物(1032) / 技能(1506) 含抽到的怪 ----------
-def monster_bag_json():
-    parts = []
-    for uc in all_monster_ucodes():
-        if get_monster_base(uc) is None:
+def monster_bag_json(page=1):
+    # ★2026-11-14: 分页下发（见上面 BAG_PAGE / MAX_BAG 的说明）。
+    #   `msg[2]` 必须是字符串 "当前页/总页" —— 客户端 `NetMonsterBag.lua:39-46` 用 `string.find(msgy[2], "/")`
+    #   解析；解析不出来就退成 {1,1}（等于假装只有一页，第 2 页永远不拉）。
+    #   ⚠ 页大小必须 <= BAG_PAGE(21)；把 BAG_PAGE 改到 >= MAX_BAG 就退回单页 "1/1"（保留这条后路）。
+    ucs = []
+    for _uc in all_monster_ucodes():
+        _b = get_monster_base(_uc)
+        if _b is None:
             continue
+        # ★★2026-11-14（P0 卡登录）：存档里若残留"L91_Status 里没有的怪"（如 500011 花末天奇，
+        #   只有 L91_StatusRender 的展示行），客户端 `SDMonster:create(mid)` 返回 nil ⇒ 1032 解析
+        #   抛错 ⇒ 登录卡 80%。这里**跳过**它们让玩家至少能进游戏；要真正救回那只怪，
+        #   跑 `work/_fix_unknown_monsters.py`（默认把 500011 映射成 500001 大天师）。
+        try:
+            _mid_chk = int(_b[0])
+        except (TypeError, ValueError):
+            _mid_chk = None
+        if _mid_chk is None or _mid_chk not in _MON_STATIC:
+            print('[BAG] 1032 跳过 L91 里不存在的怪 ucode=%s mid=%r' % (_uc, _b[0]), flush=True)
+            continue
+        ucs.append(_uc)
+    total = max(1, (len(ucs) + BAG_PAGE - 1) // BAG_PAGE)
+    try:
+        page = int(page or 1)
+    except Exception:
+        page = 1
+    page = max(1, min(page, total))
+    _start = (page - 1) * BAG_PAGE
+    parts = []
+    for uc in ucs[_start:_start + BAG_PAGE]:
         m = _mon_with_state(uc)
         if m is None:
             # ★2026-09-11 (v21 §3.5): 兜底分支也要用穿戴皮肤 (get_monster_skin), 否则没有 uequip 记录的怪
@@ -407,7 +446,7 @@ def monster_bag_json():
                      lv=get_monster_lv(uc), exp=get_monster_exp(uc), grow=get_monster_grow(uc),
                      addhp=ad[0], addatk=ad[1], adddef=ad[2], addcri=ad[3])
         parts.append(m)
-    return '[1,[[' + ','.join(parts) + '],"1/1"]]'
+    return '[1,[[' + ','.join(parts) + '],"%d/%d"]]' % (page, total)
 
 def skill_bag_json():
     # 技能背包 = 独立技能袋(ensure_skills 种子)的并集; item=[ucode,id,level,isload,isopen,ischange]

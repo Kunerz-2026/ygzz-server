@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-admin_backend.py —— 网页后台 (挂在 game_server 已有的 18080 HTTP 端口上的 /admin)
+admin_backend.py —— 私服网页后台 (挂在 game_server 已有的 18080 HTTP 端口上的 /admin)
 
 设计取舍 (为什么是"进程内 HTTP 页面"而不是独立进程/独立端口的工具):
   ① 服务端把 EQ_STATE 放在**内存**里, 外部进程直接改 state.json 会被它下一次 save_state 覆盖。
@@ -501,8 +501,29 @@ def save_backups(limit=40):
         return {'error': '%r' % e, 'items': []}
 
 
-def save_snapshot(note=''):
-    """手动打一份快照 (不参与去重/限流) -> (ok, data_or_error)"""
+def save_snapshot(note='', acct=None):
+    """手动打一份快照 (不参与去重/限流) -> (ok, data_or_error)
+
+    ★2026-11-14：多账号模式下打的是**该账号的档**（`work\\accounts\\<aid>.json`），
+      不再是模板 state.json —— 否则后台打出来的快照回档时用不上（见 `_restore_account`）。
+    """
+    if _multi():
+        try:
+            import accounts as _A
+        except Exception as e:
+            return False, '多账号模块不可用: %r' % (e,)
+        aid = str(acct or '')
+        if not aid or not _A.REGISTRY.exists(aid):
+            return False, '多账号模式：要先在右上角选一个**已存在**的账号（当前 acct=%r）' % (acct,)
+        try:
+            name = _A.REGISTRY.snapshot_account(_A.REGISTRY.get_or_create(aid),
+                                                tag='acct-manual', note=str(note or '')[:120],
+                                                force=True)
+        except Exception as e:
+            return False, '%r' % (e,)
+        if not name:
+            return False, '该账号还没有存档文件（没进过游戏？）'
+        return True, {'file': name, 'aid': aid}
     try:
         p = st.backup_state('manual', note=str(note or '')[:120])
         if not p:
@@ -512,7 +533,78 @@ def save_snapshot(note=''):
         return False, '%r' % e
 
 
-def save_restore(name, expected_sha=None, drop_conns=True):
+def _restore_account_snapshot(name, expected_sha=None, acct=None, _A=None):
+    """多账号模式的回档：把一个**账号档快照**写回 `work\\accounts\\<aid>.json`。
+
+    与单档回档的差别：
+      · 快照的 `.meta.json` 里必须有 `aid`（`accounts.snapshot_account` 写的）；
+        没有 `aid` 的是"模板快照"（单档时代的 state.json），**不能**用来回账号 —— 拒绝并说清原因；
+      · 回档前先给当前档打一份 `acct-pre-restore` 留底（所以回档本身也能回滚）；
+      · 写完把内存里的账号对象踢掉（`evict`），并断开在线连接，让客户端重连后读新档。
+    """
+    import hashlib as _h
+    d = _A.REGISTRY._snapdir()
+    if not name or os.path.basename(name) != name or not name.endswith('.json'):
+        return False, '快照名不合法（只接受 _backups 下的纯文件名）: %r' % (name,)
+    src = os.path.join(d, name)
+    if not os.path.isfile(src):
+        return False, '快照不存在: %s' % name
+    try:
+        with open(src + '.meta.json', 'r', encoding='utf-8') as f:
+            meta = json.load(f)
+    except Exception:
+        meta = {}
+    aid = str(meta.get('aid') or '')
+    if not aid:
+        return False, ('这是**模板快照**（单档时代的 state.json），不含任何玩家档，多账号下不能用它回档。'
+                       '请选标签为 acct-* 的账号快照；没有的话先点「立刻打一份快照」。')
+    if acct and str(acct) != aid:
+        return False, '快照属于账号 %s，与右上角选中的 %s 不一致（防串档）' % (aid, acct)
+    try:
+        with open(src, 'rb') as f:
+            b = f.read()
+    except Exception as e:
+        return False, '快照读不到: %r' % (e,)
+    sig = _h.sha256(b).hexdigest()[:16]
+    if expected_sha and str(expected_sha)[:16] != sig:
+        return False, '快照哈希不符（期望 %s，实际 %s）—— 拒绝回档' % (str(expected_sha)[:16], sig)
+    # ① 回档前留底（保护性，不受限流）
+    try:
+        _A.REGISTRY.snapshot_account(_A.REGISTRY.get_or_create(aid), tag='acct-pre-restore',
+                                     note='回档前自动留底 (%s)' % name, force=True)
+    except Exception as e:
+        print('[ADMIN] WARN 回档前留底失败: %r' % (e,), flush=True)
+    # ② 原子替换账号档
+    dst = _A.REGISTRY._path(aid)
+    tmp = dst + '.tmp'
+    try:
+        with open(tmp, 'wb') as f:
+            f.write(b)
+        os.replace(tmp, dst)
+    except Exception as e:
+        try:
+            os.remove(tmp)
+        except Exception:
+            pass
+        return False, '写账号档失败: %r' % (e,)
+    # ③ 丢掉缓存 + 踢连接
+    try:
+        _A.REGISTRY.evict(aid)
+    except Exception:
+        pass
+    dropped = 0
+    try:
+        if DEP.get('drop_all'):
+            dropped = DEP['drop_all']()
+    except Exception as e:
+        print('[ADMIN] WARN 断连失败: %r' % (e,), flush=True)
+    return True, {'msg': '已回档到账号 %s 的 %s' % (aid, meta.get('created', name)),
+                  'dropped_conns': dropped,
+                  'player_lv': meta.get('player_lv'), 'gold': meta.get('gold'),
+                  'monsters': meta.get('monsters'), 'aid': aid, 'file': name}
+
+
+def save_restore(name, expected_sha=None, drop_conns=True, acct=None):
     """一键回档 -> (ok, data_or_error)。
 
     ⚠ 语义与风险 (写进返回值, 后台必须原样展示给运营):
@@ -536,10 +628,9 @@ def save_restore(name, expected_sha=None, drop_conns=True):
     except Exception:
         _A = None
     if _A is not None and _A.ENABLED and _A.REGISTRY is not None:
-        return False, ('多账号模式已开启 ⇒ **回档被拒绝**(不是故障, 是刻意的)。'
-                       '原因: 快照源是模板 state.json, 而账号档 (work\\accounts\\*.json) '
-                       '**从不进快照** ⇒ 回档会用模板覆盖被绑定账号的档, 且覆盖后无法再回滚。'
-                       '要备份/还原单个账号: 直接拷 work\\accounts\\<id>.json。')
+        # ★★2026-11-14：多账号下**改成回账号档**（模板 state.json 的快照在这里没有意义）。
+        #   修前这里直接拒绝 ⇒ 后台只会显示"回档失败: 400"，运营完全不知道该怎么办。
+        return _restore_account_snapshot(name, expected_sha, acct=acct, _A=_A)
     ok, msg = st.restore_from_backup(name, expected_sha=expected_sha)
     if not ok:
         return False, msg
@@ -773,10 +864,12 @@ def handle(handler, path, body, send_json, send_bytes, send_text):
                 b = jbody()
                 act = str(b.get('action') or 'snapshot')
                 if act == 'snapshot':
-                    okv, data = save_snapshot(b.get('note') or '')
+                    okv, data = save_snapshot(b.get('note') or '',
+                                              acct=(qs.get('acct') or b.get('acct')))
                     send_json({'ok': okv, 'data': data}, code=200 if okv else 400)
                 elif act == 'restore':
                     okv, data = save_restore(b.get('file'), b.get('sha'),
+                                             acct=(qs.get('acct') or b.get('acct')),
                                              drop_conns=(b.get('drop_conns', True) is not False))
                     send_json({'ok': okv, 'data': data}, code=200 if okv else 400)
                 else:

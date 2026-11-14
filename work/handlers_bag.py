@@ -73,7 +73,7 @@ _CT20_MIN_QUALITY = 4      # T37 CT=20 的 Value='4|5'（SDEquip.getColorByQuali
 def note_equip_gained(static_id):
     """装备入包时调用：品质 ≥4（紫/红）就计一次 T37 CT=20「极品装备」。
 
-    ⚠ 这是**唯一**的装备入包计数点：三处造装备的地方（`grant_entries` /
+    ⚠ 这是**唯一**的装备入包计数点：三处造装备的地方（`grant_entries` / 
       `handlers_game._grant_reward` / `handlers_game._grant_content_row`）都调它，
       免得再出现"两套实现一全一半"。
     """
@@ -1200,6 +1200,21 @@ def handle_piece_compose(body_json):
     if iteam <= 0:
         return b'[0,{}]'
     times = count // iteam                    # 合成次数
+    # ★★2026-11-14（P0 卡登录）：产怪类合成**先验 ComposeID 再扣碎片**。
+    #   L07 里 `4000501 UR卡妖怪·魂`（100 片）与 `4500011 花末天奇·魂`（100 片）的 ComposeID 带
+    #   `500011`，而 `L91_Status` 里没有这只怪（只有 L91_StatusRender 的展示行）⇒ 合出来客户端
+    #   渲染不了、下次登录卡在 80%。修法：只从"L91 里真有的怪"里抽；一个都没有就**不扣碎片**回 114。
+    _cids4 = cids
+    if group == 4:
+        try:
+            from handlers_draw import _MON_STATIC as _MS4
+            _cids4 = [c for c in cids if int(c) in _MS4]
+        except Exception:
+            _cids4 = list(cids)
+        if not _cids4:
+            print('[BAG] 1168 拒绝合成: item=%s 的 ComposeID=%r 全部不在 L91_Status（不扣碎片）'
+                  % (itemid, cids), flush=True)
+            return b'[114]'
     EQ_STATE['prop'][ucode] -= times * iteam
     if EQ_STATE['prop'][ucode] <= 0:
         EQ_STATE['prop'].pop(ucode, None)
@@ -1208,12 +1223,13 @@ def handle_piece_compose(body_json):
     if group == 4:                       # 妖怪碎片 -> 产怪 (30字段item进怪包)
         made = []
         for _ in range(times):
-            mid = _pick_compose(cids, rate, ctype)
+            mid = _pick_compose(_cids4, rate, ctype)
             if mid is None:
-                mid = int(cids[0]) if cids else 0
+                mid = int(_cids4[0]) if _cids4 else 0
             if mid:
                 uc = _add_monster(mid)
-                made.append(uc)
+                if uc:                       # ★2026-11-14: _add_monster 现在会拒绝未知 mid 并返回 None
+                    made.append(uc)
         drop_info = _drop_monster(made)
     elif group == 14:                    # 皮肤碎片 -> 产皮肤 (dropInfo style14; 已验证不崩)
         #   ★2026-09-12 修复 (用户反馈 §4 "背包打开重复的皮肤没有变换成碎片"):
@@ -1276,14 +1292,25 @@ def _pick_compose(cids, rate, ctype):
 def _add_monster(mid):
     # 沿用 handlers_draw 的入包逻辑: ucode 自增, 写入 EQ_STATE['monsters'] + monster_ueq
     # ★2026-10-02 (审计 §9 高severity #3): 取号走**原子**入口(旧实现是读-改-写, 并发重号)
+    # ★★2026-11-14（P0 卡登录）：mid 必须先能在 `L91_Status` 里查到，否则**拒绝建怪**。
+    #   修前查不到时是"静默兜底"（skin=0 / skills=0）照样写进存档 —— 而客户端
+    #   `SDFactory:getObject(SDMonster, mid)` 拿不到静态表返回 nil，`1032` 一加载就抛错 ⇒
+    #   **登录永远卡在 80%**。真机已复现：L07 的 `4000501 UR卡妖怪·魂` / `4500011 花末天奇·魂`
+    #   ComposeID 里带 **500011（花末天奇）**，这只在 `L91_Status` 里根本不存在（只有
+    #   `L91_StatusRender` 的展示行）⇒ 100 片 UR 碎片合出来即砖档。
+    from handlers_draw import _MON_STATIC as _MS
+    try:
+        _mid = int(mid)
+    except (TypeError, ValueError):
+        _mid = None
+    if _mid is None or _mid not in _MS:
+        print('[BAG] 拒绝创建 L91_Status 里不存在的妖怪 mid=%r（否则客户端 1032 解析必崩）' % (mid,),
+              flush=True)
+        return None
     uc = alloc_monster_ucode()
     # 怪物的 skin/skills 从 L91 取 (同 handlers_draw 的 _MON_STATIC)
-    try:
-        from handlers_draw import _MON_STATIC
-        q, skin, skills, tall = _MON_STATIC[mid]
-    except Exception:
-        skin, skills = 0, [0] * 6
-    EQ_STATE['monsters'][uc] = [mid, skin, 100, list(skills)]
+    _q, skin, skills, _tall = _MS[_mid]
+    EQ_STATE['monsters'][uc] = [_mid, skin, 100, list(skills)]
     EQ_STATE['monster_ueq'][uc] = ('0', '0', '0')
     EQ_STATE['monster_lv'][uc] = 1
     EQ_STATE['monster_exp'][uc] = 0

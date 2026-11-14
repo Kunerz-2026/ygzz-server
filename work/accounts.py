@@ -32,6 +32,7 @@
 import contextvars
 import copy
 from contextlib import contextmanager
+import hashlib
 import json
 import os
 import shutil
@@ -194,6 +195,11 @@ class Registry(object):
         self._guild_tx_forced = set()
         self._guild_tx_aborted = False
         self._guild_tx_force_world = False
+        # ★2026-11-14：账号档快照的限流/去重状态（每账号记"上次快照时间 + 内容哈希"）。
+        #   多账号模式下 `state.backup_state()` 只快照模板 state.json，账号档从来不进快照
+        #   ⇒ 后台「一键回档」只能 400。这里给**账号档文件本身**补一套快照（见 snapshot_account）。
+        self._snap_last = {}
+        self._snap_sig = {}
         self.guild_world_initialized = False
         os.makedirs(root, exist_ok=True)
         self._recover_guild_journal()
@@ -803,6 +809,12 @@ class Registry(object):
                   % (acc.id, os.path.basename(self._path(acc.id)),
                      (acc.data.get('recharge') or {}).get('total'),
                      (acc.data.get('shop_buy') or {}).get('666')))
+            # ★2026-11-14: 写盘**前**给旧档留一份快照（限流 5 分钟 / 内容不变就跳过）。
+            #   放在这里而不是 handler 里：所有存档路径都会经过 save()，漏不掉。
+            try:
+                self.snapshot_account(acc)
+            except Exception as _e:
+                print('[ACCT] WARN 账号档快照失败(不影响存档): %r' % (_e,), flush=True)
             return self._save_json(self._path(acc.id), acc.data)
 
     def save_current(self):
@@ -810,6 +822,99 @@ class Registry(object):
         if acc is None:
             raise AccountsError('save_current(): 当前线程没有账号上下文 —— 拒绝落盘(防串档)')
         self.save(acc)
+
+    # ---------------- 账号档快照 / 回档（★2026-11-14） ----------------
+    # 背景：`state.backup_state()` 快照的是**模板 state.json**；多账号下玩家数据在
+    # `work\accounts\<aid>.json`，这些文件**从来不进快照** ⇒ 后台「一键回档」只能返回 400
+    # （`admin_backend.save_restore` 刻意拒绝）。运营在后台点了就是一句"回档失败: 400"。
+    # 这里给每个账号的档文件单独打快照：落在同一个 `_backups\` 目录、同一种 meta 格式
+    # （多一个 `aid` 字段），于是 `state.list_backups()` 能列出来、后台能按账号回档。
+    _SNAP_MIN_INTERVAL = 300.0     # 同一账号最多 5 分钟一份自动快照
+    _SNAP_KEEP = 10                # 每账号保留最近 10 份（含 pre-restore 的留底）
+
+    def _snapdir(self):
+        """快照目录 = `work\\_backups`（与 state.backup_state 同一个）。"""
+        return os.path.normpath(os.path.join(self.root, '..', '_backups'))
+
+    def snapshot_account(self, acc, tag='acct-auto', note='', force=False):
+        """把账号档**当前内容**打一份快照 -> 文件名 or None（被限流/没文件/内容没变）。
+
+        ⚠ 由 `save()` 在**覆盖前**调用 ⇒ 快照的是"改之前"的状态，正好用来回档。
+        限流：同账号 5 分钟内最多一份；内容哈希没变则跳过（防同一状态刷十份）。
+        """
+        src = self._path(acc.id)
+        if not os.path.isfile(src):
+            return None
+        now = time.time()
+        if not force and now - self._snap_last.get(acc.id, 0.0) < self._SNAP_MIN_INTERVAL:
+            return None
+        try:
+            with open(src, 'rb') as f:
+                b = f.read()
+        except Exception:
+            return None
+        sig = hashlib.sha256(b).hexdigest()[:16]
+        if not force and self._snap_sig.get(acc.id) == sig:
+            return None
+        d = self._snapdir()
+        try:
+            os.makedirs(d, exist_ok=True)
+        except Exception:
+            return None
+        base = 'state-%s-%s-%s' % (time.strftime('%Y%m%d-%H%M%S'), tag, acc.id)
+        name = base + '.json'
+        n = 1
+        while os.path.exists(os.path.join(d, name)):
+            n += 1
+            name = '%s-%d.json' % (base, n)
+        dst = os.path.join(d, name)
+        try:
+            with open(dst, 'wb') as f:
+                f.write(b)
+        except Exception:
+            return None
+        meta = {'file': name, 'tag': tag, 'note': note, 'aid': acc.id,
+                'bytes': len(b), 'sha256': sig,
+                'created': time.strftime('%Y-%m-%d %H:%M:%S'),
+                'player_lv': None, 'gold': None, 'monsters': None, 'mail_claimed': None}
+        try:
+            dj = json.loads(b.decode('utf-8'))
+            if isinstance(dj, dict):
+                meta['player_lv'] = dj.get('player_lv')
+                meta['gold'] = dj.get('gold')
+                meta['monsters'] = len(dj.get('monsters') or {})
+                meta['mail_claimed'] = len(dj.get('mail_claimed') or [])
+        except Exception:
+            pass
+        try:
+            with open(dst + '.meta.json', 'w', encoding='utf-8') as f:
+                json.dump(meta, f, ensure_ascii=False, indent=1)
+        except Exception:
+            pass
+        self._snap_last[acc.id] = now
+        self._snap_sig[acc.id] = sig
+        self._prune_snapshots(acc.id)
+        return name
+
+    def _prune_snapshots(self, aid):
+        d = self._snapdir()
+        try:
+            fs = sorted(f for f in os.listdir(d)
+                        if f.startswith('state-') and f.endswith('-' + aid + '.json')
+                        and not f.endswith('.meta.json'))
+        except Exception:
+            return
+        for old in fs[:-self._SNAP_KEEP]:
+            for p in (os.path.join(d, old), os.path.join(d, old + '.meta.json')):
+                try:
+                    os.remove(p)
+                except Exception:
+                    pass
+
+    def evict(self, aid):
+        """丢掉内存里的账号对象（回档后必须调，否则旧数据会在下一次 save 时写回去）。"""
+        with self._guild_lock:
+            return self.by_id.pop(str(aid), None) is not None
 
     # ---- 共用世界（I5）----
     def all_accounts(self):
@@ -968,7 +1073,7 @@ def parse_acct_param(path):
       —— 一处按严格规则拒、另一处按裸 `split('acct=')` 取，绕过就从那条缝里来。
     ★ 只认 `?` 之后的查询串、只认**第一个** `acct=`、**不做 percent-decode**：
       值必须是字面 `u` + 4 位数字。于是 `../state` / `%61cct=u0002` / `?x=acct=u0002`
-      这些形态全部被拒（`../state` 曾可越出 `work/accounts/` 读到别处的 json）。
+      这些形态全部被拒（`../state` 曾可越出 `work\accounts\` 读到别处的 json）。
     """
     q = path.split('?', 1)
     if len(q) < 2:

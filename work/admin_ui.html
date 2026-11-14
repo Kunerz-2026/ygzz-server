@@ -3,9 +3,9 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Yokai: Spirits Hunt (妖怪正传) · 后台</title>
+<title>妖怪正传 · 私服后台</title>
 <!--
-  admin_ui.html —— 网页后台 (由 game_server 的 18080 端口提供, 见 admin_backend.py)
+  admin_ui.html —— 私服网页后台 (由 game_server 的 18080 端口提供, 见 admin_backend.py)
 
   设计要点:
     · 只走**邮件发放**一条通道: 物品先进邮件, 玩家在游戏里点领取。
@@ -76,7 +76,7 @@
 </head>
 <body>
 <header>
-  <h1>Yokai: Spirits Hunt (妖怪正传) · 后台</h1>
+  <h1>妖怪正传 · 私服后台</h1>
   <span class="badge" id="bLive">在线 -</span>
   <span class="badge" id="bPid">pid -</span>
   <span class="badge" id="bUp">-</span>
@@ -508,8 +508,10 @@ async function loadSave() {
       <td><span class="hint">${b.created || fmtTime((b.mtime||0)*1000)}</span></td>
       <td><b>${b.tag || '?'}</b>${b.note ? '<br><span class="hint">' + b.note + '</span>' : ''}
           <br><span class="hint">${b.file || ''}</span></td>
-      <td><span class="hint">lv=${b.player_lv} 铜钱=${b.gold} 怪=${b.monsters} 邮件=${b.mail_claimed} v${b.state_version}<br>sha=${b.sha256}</span></td>
-      <td><button class="sm danger" onclick="restoreSave('${b.file}','${b.sha256}')">回档</button></td>
+      <td><span class="hint">${b.aid ? ('账号 ' + b.aid) : '(模板 state.json)'}<br>lv=${b.player_lv} 铜钱=${b.gold} 怪=${b.monsters} 邮件=${b.mail_claimed} v${b.state_version}<br>sha=${b.sha256}</span></td>
+      <td>${(MULTI && !b.aid)
+        ? '<button class="sm" disabled title="模板快照不含玩家档，多账号下不能用它回档">模板快照</button>'
+        : `<button class="sm danger" onclick="restoreSave('${b.file}','${b.sha256}')">回档</button>`}</td>
     </tr>`).join('') : '<tr><td colspan="4" class="hint">还没有快照</td></tr>';
 }
 async function snapshotNow() {
@@ -531,7 +533,12 @@ async function restoreSave(file, sha) {
     say('saveMsg', `回档完成：${d.msg}\n断开连接 ${d.dropped_conns} 条 · 回到 lv=${d.player_lv} 铜钱=${d.gold} 怪=${d.monsters}`
         + '\n请在游戏里等它自动重连 (或点启动器 [9] 强制重启游戏)', true);
   } else {
-    say('saveMsg', '回档失败: ' + (r.error || r.__http), false);
+    // ★2026-11-14: 服务端的失败原因是放在 data 里的（ok=false 时 data 是字符串），
+    //   修前这里只显示 r.error / HTTP 码 ⇒ 运营只看到"回档失败: 400"，完全不知道怎么办。
+    let why = r.error;
+    if (!why && r.data != null) why = (typeof r.data === 'string') ? r.data : JSON.stringify(r.data);
+    if (!why) why = r.__http;
+    say('saveMsg', '回档失败: ' + why, false);
   }
   await Promise.all([loadSave(), loadPlayer()]);
 }

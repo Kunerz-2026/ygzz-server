@@ -136,7 +136,7 @@ from handlers_skill import (handle_skill_chip_compose, handle_skill_study,
                             handle_skill_intensify, handle_skill_replace)
 from handlers_task import handle_daily_task, handle_daily_task_reward, handle_liveness_reward
 # ★2026-10-11（A0 第 2 批）: 在线奖励（1302~1304）+ 限时新手任务剩余时间（4070）。
-#   这两个系统是 target client新增的，other version 里连 msgid 都不存在（见模块头注释）。
+#   这两个系统是 1.30 装机包新增的，官方 1.31 里连 msgid 都不存在（见模块头注释）。
 from handlers_onlinereward import (handle_online_reward_info, handle_online_reward_refresh,
                                    handle_online_reward_draw, handle_limited_time_new_task_time)
 from handlers_pvp import (handle_pvp_get_bat_arr, handle_pvp_save_bat_arr, handle_pvp_unlock_map,
@@ -171,7 +171,7 @@ handle_sociaty_apply_join_req,
 from handlers_sweep import (handle_sweep_enter, handle_sweep_start, handle_sweep_finish,
                             handle_redeem_code)
 # ★★2026-10-11（A0 第 5 批）皮肤抽奖 4500/4501/4502/4504/4505/4506/4507
-#   （表 D201/D202/D203/D204 本轮由 work\_table_migrate.py 从目标客户端迁入表根）
+#   （表 D201/D202/D203/D204 本轮由 work\_table_migrate.py 从装机包迁入表根）
 from handlers_skinlottery import (handle_skin_shop_info, handle_skin_shop_buy,
                                   handle_skin_lottery_start, handle_skin_box_push,
                                   handle_skin_home_info, handle_skin_get_box,
@@ -198,7 +198,7 @@ from handlers_ugtask import (handle_ug_task_info, handle_ug_task_play, handle_ug
 from handlers_extradrop import handle_exdrop_info, handle_exdrop_exchange
 # ★★2026-10-11（A0 第 12 批）特攻规则面板 12000（跨活动共用，"妖主·特攻·规则提示"）。
 #   ★这些值是**运营/GM 配置**（`NetSpecialAtt.lua:33` 对 msg[1] 的注释就是"gm所需字段"），
-#     两个客户端里**没有任何特攻表**（逐表核过）⇒ 本服没有可发的规则，硬凑伤害百分比就是灌假数值。
+#     两个客户端包里**没有任何特攻表**（逐表核过）⇒ 本服没有可发的规则，硬凑伤害百分比就是灌假数值。
 #   ★回**结构完整的 14 槽 + `switchIs=0`**（客户端自己写的"未开启"分支：不筛名单、不发事件 ⇒ 面板不出现）。
 #     ⚠ 兜底 `[1,[[]]]` 更糟：`switchIs=nil` ⇒ `nil==0` 为**假** ⇒ 客户端**走进筛选分支**、
 #     三个 attacktype 分支都不命中 ⇒ 名单落成**全部妖怪** ⇒ 弹出"所有妖怪都是特攻、文案全空"的**假规则**。
@@ -374,8 +374,8 @@ def auth_enable():
 def _seed_auth_from_index(store):
     """把**磁盘上已有**的账号登记为"未认领"（保留既有玩家档的迁移映射）。
 
-    改造前 `_accounts.json` 里已经有玩家（形如 `<peer> -> u0001`、
-    `<userid> -> u0003`）。它们**没有口令**。不登记的话：
+    改造前 `_accounts.json` 里已经有玩家（形如 `192.0.2.10 -> u0001`、
+    `user:test -> u0003`）。它们**没有口令**。不登记的话：
       · 要求口令 → 这三个玩家永远进不去（"角色没了"）；
       · 不要求口令 → 鉴权形同虚设。
     ⇒ 登记为 `legacy/未认领`，第一次用"账号名 + 口令"登录即认领（`AuthStore.claim`）。
@@ -403,7 +403,7 @@ def _claim_allow():
     """允许**自助认领**的存量账号（逗号分隔）。
 
     ★★2026-10-26（审查 H2）：默认**空** —— "磁盘上有旧档"不再等于"谁先来谁设密码"。
-      迁移时由运维显式给一次（`YGZZ_CLAIM_ALLOW=<account-a>,<account-b>`）或事后用
+      迁移时由运维显式给一次（`YGZZ_CLAIM_ALLOW=alice,bob`）或事后用
       `_auth_admin.py claim <账号>` 逐条放行；放行会写进 `_auth.json`（`claimable`），
       认领成功后自动关掉。别把"方便"做成常开 —— 那就是 H2 那条漏洞。
     """
@@ -551,7 +551,7 @@ GAME_HANDLERS = {
     1037: (handle_story_unlock_list, False),
     # ★★2026-10-11（A0 第 4 批）剧情任务/解锁 3502~3505。修前四个号都不在表里。
     #   依赖两张表：`T20_StoryGroup` **补两列**（LockedItem/LockedTask）+ `T20_2_StoryTaskList`
-    #   整张迁入（7 行，只在目标客户端），走 `work\_table_migrate.py`（写 + 回读双证）。
+    #   整张迁入（7 行，只在装机包），走 `work\_table_migrate.py`（写 + 回读双证）。
     #   · 3502 STORY_TASK_INFO  req{storyid} -> [[taskid,tasknum,taskstate]]（pairs 无守卫）
     #   · 3503 STORY_TASKREWARD req{taskid}  -> [roleInfo(**数组**), dropInfo]；537/538/539
     #   · 3504 STORY_UNLOCK     req{storyid} -> msg[1] 是**扁平三元组** [ucode,itemid,剩余count]
@@ -649,7 +649,7 @@ GAME_HANDLERS = {
     1165: (handle_nightmarket_shop_info, False), 1166: (handle_nightmarket_shop_buy, True),
     1167: (handle_nightmarket_token_push, False),
     # ★★2026-10-11（A0 第 6 批）夜市排行榜/累计奖励 11611/11612。
-    #   数据源 `A06_3_ActivityMarketReward`(14) **只在目标客户端**，本批迁入表根。
+    #   数据源 `A06_3_ActivityMarketReward`(14) **只在装机包**，本批迁入表根。
     #   · 11611 msg[1] 必须 ≥2 槽（客户端直接取 `msg[1][2]` 当"我这一行"）、msg[2] 必须存在
     #     （扁平 6 项，1=已领/2=未领/3=未完成；客户端注释写 0/1/2 是**错的**）。
     #   · **未上榜回 `rank = -1`**：`VNMarketReward.lua:156` 判 `top == -1` 才显示"未上榜"。
@@ -732,7 +732,7 @@ GAME_HANDLERS = {
     # ★★2026-10-11（A0 第 5 批）皮肤抽奖 4500~4507（**4503 不存在**，客户端也没定义）。
     #   ⚠ 与上面那组**完全无关**：1401 那套是 `D101~D104`（妖魂占卜），这一套是
     #     `D201~D204`（皮肤抽奖克隆版）—— 两张表内容不同（哈希确认过），别互相替代。
-    #   ⚠ 4502 必须回**四槽**：目标客户端 `A04_JumpTag` 的 `TagId=11025` 行为 `FunctionCHS='1'`
+    #   ⚠ 4502 必须回**四槽**：装机包 `A04_JumpTag` 的 `TagId=11025` 行为 `FunctionCHS='1'`
     #     ⇒ 客户端走 `getSysOpenV(11025)` 为真的分支，`msg[4]` 才是 `[roleInfo, dropInfo]`；
     #     回三槽会让它拿数字当 roleInfo 传给 `gamer_setRoleInfo` 崩。
     #   ⚠ 4504 是**推送**号（客户端只被动收），登记它是为了让"客户端真发了"时也有正确应答。
@@ -1568,9 +1568,19 @@ def handle_game(conn, addr, port=0):
                     conn.sendall(pack_login_frame(mid, 0, resp))
                     conn.sendall(pack_login_frame(1077, 0, vitality_remain_push()))
                     log('sent msg(1076) push_begin + push 1077 countdown')
-                elif mid == 1032:  # MONSTER_BAG 动态 (含抽到的怪)
-                    resp = monster_bag_json().encode('utf-8')
-                    conn.sendall(pack_login_frame(mid, 0, resp)); log('sent msg(1032) monster_bag dyn n=%d' % len(resp))
+                elif mid == 1032:  # MONSTER_BAG 动态 (含抽到的怪) —— 按页下发
+                    # ★2026-11-14: 客户端 req = {"page": n}（`NetMonsterBag.lua:24`）；缺省/坏包按第 1 页。
+                    #   第 1 页会把客户端本地怪物缓存清掉再灌（`NetMonsterBag.lua:51`），所以这里不能
+                    #   "反正都一样"地忽略页号 —— 否则第 2 页请求会拿到第 1 页 -> 客户端以为没拉完。
+                    _pg = 1
+                    try:
+                        _bz = extract_body_json(raw)
+                        if _bz:
+                            _pg = (json.loads(_bz) or {}).get('page') or 1
+                    except Exception:
+                        _pg = 1
+                    resp = monster_bag_json(_pg).encode('utf-8')
+                    conn.sendall(pack_login_frame(mid, 0, resp)); log('sent msg(1032) monster_bag page=%s n=%d' % (_pg, len(resp)))
                 elif mid == 1030:  # EQUIP_BAG 动态 (反映真实 isload/等级, 避免"已装备但没穿上/等级都1")
                     resp = equip_bag_json().encode('utf-8')
                     conn.sendall(pack_login_frame(mid, 0, resp)); log('sent msg(1030) equip_bag dyn n=%d' % len(resp))
@@ -1955,7 +1965,7 @@ def _run_bound_game(conn, addr, port):
             if _auth_active():
                 # ★★2026-10-26（审查 H1）：鉴权开启时**不按来源 IP 预绑档**。
                 #   `bind_peer` 会为陌生 peer 在 `_accounts.json` 发一个新号（**写盘**），
-                #   而"来源 IP"本来就不是身份（本机所有 模拟器 客户端是同一个 IP）。
+                #   而"来源 IP"本来就不是身份（本机所有 MuMu 客户端是同一个 IP）。
                 #   身份一律等 1002/1004 携票绑定 —— 这段预绑正是"未认证 1002 能改档"的入口。
                 log('ACCT 鉴权模式：连接不预绑 peer 档，等 1002/1004 携票 conn=%s'
                     % _conn_id(conn))
@@ -2383,16 +2393,16 @@ def drop_all_conns():
 def b64json(o): return base64.b64encode(json.dumps(o,separators=(',',':')).encode()).decode()
 # SQLoginData:setData 会逐字段从 gameData 取配置; 空 gameData 会使这些字段变 nil(导致 notice_url=nil)。
 GAME_DATA = {
-    'answer': False, 'answer_url': 'https://example.com',
-    'bilog': False, 'bilog_url': 'https://example.com',
-    'buglog': False, 'buglog_url': 'https://example.com',
+    'answer': False, 'answer_url': 'http://www.baidu.com',
+    'bilog': False, 'bilog_url': 'http://www.baidu.com',
+    'buglog': False, 'buglog_url': 'http://www.baidu.com',
     'debugs': False,
     'notice_url': http_base() + '/notice',
     'update': False, 'update_url': http_base() + '/notice',
-    'complaints': True, 'complaints_url': 'https://example.com',
-    'behavior': False, 'behavior_url': 'https://example.com',
+    'complaints': True, 'complaints_url': 'http://www.baidu.com',
+    'behavior': False, 'behavior_url': 'http://www.baidu.com',
 }
-SERVER_ITEM = {'serverid':9001,'ip':ADV_HOST,'port':ADV_SOCK_PORT,'name':'Yokai: Spirits Hunt (妖怪正传)','status':2,
+SERVER_ITEM = {'serverid':9001,'ip':ADV_HOST,'port':ADV_SOCK_PORT,'name':'妖怪正传私服','status':2,
                'preopenstate':0,'preopentime':0,'listenbehavior':1,'orderindex':1,
                # ★2026-10-01 (B 任务): 字段名兼容别名 —— 同一份服务器对象在客户端有**两套**读法:
                #   · 活路径 MLoginHome.lua:137-138 `getServerInfoByID(...)` -> `.ip` / `.port`  ✔ 一直是对的
@@ -2420,11 +2430,11 @@ def _send_cdn_denied(handler, path):
 # **直接**映射到已注册账号并在首次请求时给它签一张会话。
 #
 # ## 为什么需要它（真机实测的决定性事实）
-# 目标客户端 `JUMP_SDK` 对话框的**第一个输入框是 userid 而不是账号名**
+# 装机包 `JUMP_SDK` 对话框的**第一个输入框是 userid 而不是账号名**
 # （`LoginHomeSdk.lua:1356-1365 _setLoginUserId()` 把框里的串直接写进
 # `SQLoginData.userData.userid`），而它的占位文案是「账号：154079178310301434」
 # —— 看上去像账号名，实际是 userid。客户端随后**只带这个 userid** 去
-# `/ucenter/serverlist`（真机实测 `body=...&userid=<userid>&serverzone=applestore`）。
+# `/ucenter/serverlist`（真机实测 `body=...&userid=test1&serverzone=applestore`）。
 # ⇒ 想验"游戏 socket 的票据鉴权"这条真机路径，必须让那个 userid 先有一张票；
 #    否则服务端会（**按设计**）回 "会话无效，请重新登录"，而这是**正确行为**。
 #
@@ -2441,7 +2451,7 @@ def _seed_allowed(peer):
       白名单里的 userid 换一张票据（`_deploy_isolated.py` 绑的是 0.0.0.0）。那等于
       "一个环境变量就能穿透鉴权"。现在两条件缺一不可：
         ① `YGZZ_SEED_LOOPBACK=1`（显式声明"我在做本机/模拟器验收"）；
-        ② 请求来自回环地址（模拟器 经模拟器 NAT 到宿主时，服务端看到的也是 127.0.0.1）。
+        ② 请求来自回环地址（MuMu 经模拟器 NAT 到宿主时，服务端看到的也是 127.0.0.1）。
       生产部署两个都不该出现；拒绝时只记一行日志，不再签发任何票据。
     """
     if os.environ.get('YGZZ_SEED_LOOPBACK') != '1':
@@ -2491,11 +2501,9 @@ def _seed_issue(userid, store, peer):
             log('AUTH 邀请码不符 name=%r invite=%r peer=%s' % (_name, _invite, peer))
             raise ygzz_auth.AuthError(ygzz_auth.HTTP_BAD_PASSWORD, '邀请码无效')
         if not store.exists(_name):
+            import zlib
             _aid = _new_account_for(_name, peer)
-            # Guest login does not use this password. Generate a random one instead of
-            # deriving it from the account name: a predictable password would let anyone
-            # take over the account if password login is enabled later.
-            _pwd = 'guest-' + os.urandom(24).hex()
+            _pwd = 'guest-%08d' % (zlib.crc32(_name.encode('utf-8')) % 100000000)
             store.register(_name, _pwd, _aid)
             log('AUTH 游客建号 account=%r aid=%s peer=%s' % (_name, _aid, peer))
         _rec = store.get(_name) or {}
@@ -2711,7 +2719,7 @@ def _ensure_role_name(aid, account):
     """P 发布：账号**首次绑定**时没有 role_name -> 用账号名（@ 前）落一个。
 
     客户端不再弹建角（1002/1009 保持原样），角色名就来自这里：
-    账号 `alice@example.com` -> `alice`；重名追加 2/3…；空名 -> `玩家<aid>`。
+    账号 `alice@x.com` -> `alice`；重名追加 2/3…；空名 -> `玩家<aid>`。
     只写本账号自己的档；失败只打日志，不影响登录。
     """
     reg = accounts.REGISTRY
@@ -2982,7 +2990,7 @@ class HTTP(BaseHTTPRequestHandler):
         #   ★2026-10-02: 旧实现返回 `assets: {}`，version/engineVersion 写死 '1.29.001' —— 那只是占位。
         #   真清单由 work\hotupdate.py 从 ygzz\hotfix_src\ **逐文件算 md5** 生成。
         #   三条不变量(护栏 _hotupdate_manifest_test.py 逐条断言):
-        #     ① engineVersion == 目标客户端 assets/src/config.lua:32 的 internal_600
+        #     ① engineVersion == 装机包 assets/src/config.lua:32 的 internal_600
         #        (不等 -> AssetsManagerEx 判成"引擎版本不同" -> 走 UPDATE_ENGINE 去下新客户端)
         #     ② version 来自 hotfix_src\RELEASE.json
         #        (内容变了版本没变 -> 客户端永远认为"已是最新", 改动永远下不去)
@@ -3012,8 +3020,8 @@ class HTTP(BaseHTTPRequestHandler):
             #     ② `replace('..','')` 只挡 '..', 而 `C:/Windows/win.ini` 里根本没有 '..'。
             #   ⇒ 任意文件读。实测(修前)向 18080 发原始 HTTP:
             #        GET /C:/Windows/win.ini                    -> 200 + 92 B
-            #        GET /<work>/admin_token.txt      -> 200 + 32 B  (/admin token)
-            #        GET /<work>/state.json           -> 200 + 43,855 B (生产存档)
+            #        GET /D:/DSH/ygzz/work/admin_token.txt      -> 200 + 32 B  (/admin token)
+            #        GET /D:/DSH/ygzz/work/state.json           -> 200 + 43,855 B (生产存档)
             #   本端点默认绑 0.0.0.0 且无鉴权, 一旦局域网/公网可达即为**远程任意文件读**。
             #   修法: 先 normpath 再要求结果**仍在 root 之内**(用 root+sep 而不是裸前缀,
             #        否则 `...\extracted-evil` 会因前缀匹配而漏过)。
@@ -3257,3 +3265,4 @@ if __name__ == '__main__':
         print('[ADDR] 提示: 非回环下发地址, 请确认 (a) 防火墙放行 %d/%d/%d (b) 客户端侧能解析/路由到 %s'
               % (SOCK_PORT, SOCK_PORT + 1, CDN_PORT, ADV_HOST), flush=True)
     ThreadingHTTPServer((CDN_HOST,CDN_PORT),HTTP).serve_forever()
+

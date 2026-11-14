@@ -194,7 +194,8 @@ def _grant_row(gt, oid, num):
         made = []
         for _ in range(num):
             uc = _add_monster(int(oid))
-            made.append(uc)
+            if uc:                                    # ★2026-11-14: unknown mid -> None（防砖档）
+                made.append(uc)
         if made:
             from handlers_bag import _drop_monster
             groups.append(json.loads(_drop_monster(made))[1][0])
