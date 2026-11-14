@@ -757,6 +757,24 @@ class Registry(object):
             data = json.loads(json.dumps(self.seed))     # 深拷贝种子
         if not isinstance(data, dict):
             raise AccountsError('账号档 %s 不是 dict' % p)
+        # ★★2026-11-14（真机「登录卡 40%」的根因）：账号档是 `json.load` 直接进内存的，
+        #   **不经过 `state.load_state()` 的"缺键补默认"** —— 于是老档/手改档只要缺一个顶层键
+        #   （实测：缺 `equip_id` ⇒ `equip_bag_json()` 抛 KeyError ⇒ 1030 没有响应 ⇒
+        #   客户端永远等不到装备背包，卡在 40%），玩家就再也进不去，而服务端看起来一切正常。
+        #   ⇒ 这里按**只补缺、不覆盖**把模板里的顶层键填回去（值的形状与新档一致）。
+        #   注意：只补顶层键，不动 player_lv/背包等已有内容；补了哪些会打日志，便于事后核对。
+        try:
+            _seed = self.seed if isinstance(self.seed, dict) else {}
+            _added = []
+            for _k, _v in _seed.items():
+                if _k not in data:
+                    data[_k] = json.loads(json.dumps(_v))
+                    _added.append(_k)
+            if _added:
+                print('[ACCT] 账号档缺键已按模板补齐 aid=%s: %s'
+                      % (aid, ','.join(sorted(_added)[:15])), flush=True)
+        except Exception as _e:
+            print('[ACCT] !! 账号档缺键补齐失败(不影响登录): %r' % (_e,), flush=True)
         # ★★2026-10-18（真机：背包出现两本 "Dummy" 技能书）：多账号模式下账号档是
         #   `json.load` 直接进内存的，**不经过 `state.load_state()` 的迁移段** ——
         #   于是 `_purge_skill_bag_data()` 只对"模板档"生效，真实玩家档里的历史脏行

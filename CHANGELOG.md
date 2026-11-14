@@ -1,5 +1,28 @@
 # Changelog
 
+## v0.1.2 — 2026-11-14
+
+### Fixed: players could get stuck on the loading screen at 40%
+
+Account saves are loaded by `accounts._load()` with a plain `json.load`, which **does not** run the
+missing-key defaulting that `state.load_state()` performs for the template save. A save missing one
+top-level key therefore breaks the corresponding bag handler: with `equip_id` absent,
+`equip_bag_json()` raised `KeyError`, message `1030` was never answered, and the client waited
+forever for the third bag — the loading bar stopped at **40%** while the server looked healthy
+(a single `FRAMING_A handler err` line in the log).
+
+Now:
+
+- `_load()` backfills **missing** top-level keys from the template (existing values are never
+  overwritten) and logs which keys were added, so an old save keeps working after an upgrade;
+- `1030` / `1033` use `EQ_STATE.get(...) or {}`, so a save whose key exists but is `null` also
+  produces an empty bag instead of an exception.
+
+Same class of failure as v0.1.1's UR-shard bug: the player only sees a stuck progress bar, not an
+error, so the server has to be defensive about save shape.
+
+---
+
 ## v0.1.1 — 2026-11-14
 
 Server-side fixes for issues found while running the private beta. No client, data tables or

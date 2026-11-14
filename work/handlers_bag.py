@@ -303,8 +303,10 @@ from state import role_info_array  # noqa: E402  (唯一权威实现; 见 state.
 def prop_bag_json():
     # 动态道具背包: 反映 EQ_STATE['prop'] 真实数量 (ucode -> count), id 由 prop_id 取
     items = []
-    for uc in sorted(EQ_STATE['prop'].keys(), key=int):
-        cnt = EQ_STATE['prop'][uc]
+    # ★2026-11-14: 同 1030 —— 缺 `prop` 键时旧写法会 KeyError，客户端卡加载（第二道闸）。
+    _prop = EQ_STATE.get('prop') or {}
+    for uc in sorted(_prop.keys(), key=int):
+        cnt = _prop[uc]
         if cnt <= 0:
             continue
         pid = EQ_STATE.get('prop_id', {}).get(uc)

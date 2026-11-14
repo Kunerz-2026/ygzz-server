@@ -381,7 +381,10 @@ def equip_bag_json():
     # 动态装备背包(1030): 反映真实 isload/等级 (避免静态硬编码导致"已装备但没穿上/等级都1"不符)
     #   ★2026-09-12 (v26): 统一走 _equip_item, 补上 islock + 4 个寄妖位 (旧实现这两处恒 0 ->
     #     "装备锁定不生效" 且 "附魔后重进背包寄妖图标消失")
-    items = [json.dumps(_equip_item(uc), separators=(',', ':')) for uc in sorted(EQ_STATE['equip_id'].keys(), key=int)]
+    # ★2026-11-14: 用 `.get(...) or {}` 兜底 —— 老档/手改档缺 `equip_id` 时，旧写法直接
+    #   KeyError ⇒ 1030 没有响应 ⇒ 客户端卡在 40%（`accounts._load` 已经会补键，这里是第二道闸）。
+    items = [json.dumps(_equip_item(uc), separators=(',', ':'))
+             for uc in sorted((EQ_STATE.get('equip_id') or {}).keys(), key=int)]
     return '[1,[[' + ','.join(items) + '],"1/1"]]'
 
 def _mon_with_state(ucode, skin_override=None):
